@@ -1,13 +1,15 @@
 import asyncio
 import json
+import os
 from datetime import date, datetime, timedelta
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 BOT_TOKEN = "8816416258:AAFgfi2GCv9WVlRLSJgnN7Mkrw_KY4Mx_Mw"
 
-# Дата начала 1-го семестра (понедельник недели 1 сентября)
+# Начало учебного года
 SEMESTER_START = date(2026, 9, 1)
 
 bot = Bot(token=BOT_TOKEN)
@@ -23,16 +25,10 @@ def load_schedule():
         return json.load(f)
 
 def get_study_week_number(target_date: date) -> int:
-    """
-    Вычисляет номер учебной недели относительно начала семестра.
-    """
-    # Смещение до понедельника недели 1 сентября
     start_monday = SEMESTER_START - timedelta(days=SEMESTER_START.weekday())
     target_monday = target_date - timedelta(days=target_date.weekday())
     delta_days = (target_monday - start_monday).days
-    
-    week_num = (delta_days // 7) + 1
-    return week_num
+    return (delta_days // 7) + 1
 
 def get_day_schedule_text(target_datetime: datetime) -> str:
     schedule = load_schedule()
@@ -45,13 +41,12 @@ def get_day_schedule_text(target_datetime: datetime) -> str:
     lessons = schedule.get(day_key, [])
     
     if current_week < 1:
-        week_info = f"<i>(Семестр ещё не начался, старт 01.09)</i>"
+        week_info = "<i>(Семестр ещё не начался, старт 01.09)</i>"
     elif current_week > 17:
         week_info = f"<i>(Семестр завершён, {current_week}-я неделя)</i>"
     else:
         week_info = f"<b>{current_week}-я учебная неделя</b>"
 
-    # Фильтрация по текущей неделе
     active_lessons = []
     for item in lessons:
         start_w, end_w = item["weeks"]
@@ -59,12 +54,10 @@ def get_day_schedule_text(target_datetime: datetime) -> str:
             active_lessons.append(f"⏱ <b>{item['time']}</b>\n▫️ {item['text']}")
     
     header = f"📅 <b>{day_name} ({date_str})</b>\n📌 {week_info}\n"
-    
     if not active_lessons:
         return f"{header}\n🎉 В этот день пар нет (или они не выпадают на эту неделю)!"
     
-    body = "\n\n".join(active_lessons)
-    return f"{header}\n{body}"
+    return f"{header}\n" + "\n\n".join(active_lessons)
 
 keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -76,8 +69,7 @@ keyboard = ReplyKeyboardMarkup(
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "👋 Бот расписания для группы <b>14.6-520</b> с фильтром по неделям.\n"
-        "Нажмите нужную кнопку:",
+        "👋 Бот расписания для группы <b>14.6-520</b>.\nВыберите день:",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -92,9 +84,24 @@ async def send_tomorrow(message: Message):
     text = get_day_schedule_text(datetime.now() + timedelta(days=1))
     await message.answer(text, parse_mode="HTML")
 
+# Заглушка для Render, чтобы он видел открытый порт
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/healthz", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-  
+    
