@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-BOT_TOKEN = "ВАШ_ТОКЕН_ОТ_BOTFATHER"
+BOT_TOKEN = "8816416258:AAFgfi2GCv9WVlRLSJgnN7Mkrw_KY4Mx_Mw"
 
 # Дата начала 1-го семестра (понедельник недели 1 сентября)
 SEMESTER_START = date(2026, 9, 1)
