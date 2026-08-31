@@ -1,11 +1,9 @@
 import asyncio
-import html
 import json
 import os
-import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from aiohttp import web, ClientSession
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
@@ -15,6 +13,7 @@ BOT_TOKEN = "8816416258:AAFgfi2GCv9WVlRLSJgnN7Mkrw_KY4Mx_Mw"
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 SEMESTER_START = date(2026, 9, 1)
 USERS_FILE = "users.json"
+HOLIDAYS_FILE = "holidays.json"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -27,6 +26,15 @@ WEEKDAYS = [
 def load_schedule():
     with open("schedule.json", "r", encoding="utf-8") as f:
         return json.load(f)
+
+def load_holidays() -> dict:
+    if os.path.exists(HOLIDAYS_FILE):
+        try:
+            with open(HOLIDAYS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
 def load_subscribers() -> set:
     if os.path.exists(USERS_FILE):
@@ -69,54 +77,18 @@ def get_study_week_number(target_date: date) -> int:
     delta_days = (target_monday - start_monday).days
     return (delta_days // 7) + 1
 
-async def get_holidays_message(target_date: date) -> str:
-    """Получает праздники и памятные даты дня через API Википедии"""
-    months_genitive = [
+def get_holidays_text(target_date: date) -> str:
+    month_names = [
         "января", "февраля", "марта", "апреля", "мая", "июня",
         "июля", "августа", "сентября", "октября", "ноября", "декабря"
     ]
-    month_name = months_genitive[target_date.month - 1]
-    page_title = f"{target_date.day}_{month_name}"
-    date_formatted = f"{target_date.day} {month_name}"
+    date_formatted = f"{target_date.day} {month_names[target_date.month - 1]}"
+    holidays_dict = load_holidays()
+    key = f"{target_date.month}-{target_date.day}"
+    holidays = holidays_dict.get(key, ["Отличный день для учёбы и отдыха!"])
     
-    url = "https://ru.wikipedia.org/w/api.php"
-    params = {
-        "action": "parse",
-        "page": page_title,
-        "prop": "wikitext",
-        "section": "1",
-        "format": "json"
-    }
-    headers = {"User-Agent": "TelegramScheduleBot/1.1 (edu project; python-aiohttp)"}
-    
-    try:
-        async with ClientSession(headers=headers) as session:
-            async with session.get(url, params=params, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    wikitext = data.get("parse", {}).get("wikitext", {}).get("*", "")
-                    
-                    holidays = []
-                    for raw_line in wikitext.split("\n"):
-                        line = raw_line.strip()
-                        if line.startswith(("*", "**", "#")):
-                            line = re.sub(r'<!--.*?-->', '', line)
-                            line = re.sub(r'\{\{.*?\}\}', '', line)
-                            line = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', line)
-                            line = re.sub(r"['*#—–-]", '', line)
-                            line = re.sub(r'<.*?>', '', line).strip()
-                            
-                            if len(line) > 5 and not line.lower().startswith(("международные", "национальные", "религиозные", "памятные", "прочие")):
-                                holidays.append(line)
-                                if len(holidays) >= 5:
-                                    break
-                    
-                    if holidays:
-                        formatted_list = "\n".join([f"▫️ {h}" for h in holidays])
-                        return f"🎉 <b>Праздники и памятные даты на {date_formatted}:</b>\n\n{formatted_list}"
-    except Exception:
-        pass
-    return f"🎉 На {date_formatted} официальных праздников не найдено."
+    formatted_list = "\n".join([f"▫️ {h}" for h in holidays])
+    return f"🎉 <b>Праздники на {date_formatted}:</b>\n\n{formatted_list}"
 
 def get_day_schedule_text(target_datetime: datetime) -> str:
     schedule = load_schedule()
@@ -215,7 +187,7 @@ async def send_week(message: Message):
 @dp.message(F.text == "🎉 Праздники")
 async def send_holidays(message: Message):
     now_msk = datetime.now(MOSCOW_TZ)
-    text = await get_holidays_message(now_msk.date())
+    text = get_holidays_text(now_msk.date())
     await message.answer(text, reply_markup=get_main_keyboard(message.chat.id), parse_mode="HTML")
 
 @dp.message(F.text.in_(["🔔 Включить рассылку", "🔕 Отключить рассылку"]))
