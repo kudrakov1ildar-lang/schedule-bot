@@ -57,7 +57,8 @@ def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
-            [KeyboardButton(text="Вся неделя"), KeyboardButton(text=notify_text)]
+            [KeyboardButton(text="Вся неделя"), KeyboardButton(text="🎉 Праздники")],
+            [KeyboardButton(text=notify_text)]
         ],
         resize_keyboard=True
     )
@@ -68,21 +69,22 @@ def get_study_week_number(target_date: date) -> int:
     delta_days = (target_monday - start_monday).days
     return (delta_days // 7) + 1
 
-async def get_holidays(target_date: date) -> str:
-    """Получает список праздников и памятных дат дня через API Википедии"""
+async def get_holidays_message(target_date: date) -> str:
+    """Получает праздники и памятные даты дня через API Википедии"""
     months_genitive = [
         "января", "февраля", "марта", "апреля", "мая", "июня",
         "июля", "августа", "сентября", "октября", "ноября", "декабря"
     ]
     month_name = months_genitive[target_date.month - 1]
     page_title = f"{target_date.day}_{month_name}"
+    date_formatted = f"{target_date.day} {month_name}"
     
     url = "https://ru.wikipedia.org/w/api.php"
     params = {
         "action": "parse",
         "page": page_title,
         "prop": "wikitext",
-        "section": "1",  # Первая секция на страницах дат — всегда праздники и памятные дни
+        "section": "1",
         "format": "json"
     }
     headers = {"User-Agent": "TelegramScheduleBot/1.1 (edu project; python-aiohttp)"}
@@ -98,28 +100,25 @@ async def get_holidays(target_date: date) -> str:
                     for raw_line in wikitext.split("\n"):
                         line = raw_line.strip()
                         if line.startswith(("*", "**", "#")):
-                            # Убираем комментарии <!-- ... -->
                             line = re.sub(r'<!--.*?-->', '', line)
-                            # Убираем шаблоны {{...}}
                             line = re.sub(r'\{\{.*?\}\}', '', line)
-                            # Превращаем [[Ссылка|Текст]] -> Текст, [[Текст]] -> Текст
                             line = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', line)
-                            # Убираем кавычки вики, маркеры списков и html-теги
                             line = re.sub(r"['*#—–-]", '', line)
                             line = re.sub(r'<.*?>', '', line).strip()
                             
                             if len(line) > 5 and not line.lower().startswith(("международные", "национальные", "религиозные", "памятные", "прочие")):
                                 holidays.append(line)
-                                if len(holidays) >= 3:
+                                if len(holidays) >= 5:
                                     break
                     
                     if holidays:
-                        return "🎈 <b>Праздники сегодня:</b>\n" + "\n".join([f"▫️ {h}" for h in holidays]) + "\n\n"
+                        formatted_list = "\n".join([f"▫️ {h}" for h in holidays])
+                        return f"🎉 <b>Праздники и памятные даты на {date_formatted}:</b>\n\n{formatted_list}"
     except Exception:
         pass
-    return ""
+    return f"🎉 На {date_formatted} официальных праздников не найдено."
 
-async def get_day_schedule_text(target_datetime: datetime, include_holidays: bool = False) -> str:
+def get_day_schedule_text(target_datetime: datetime) -> str:
     schedule = load_schedule()
     target_date = target_datetime.date()
     day_key = str(target_date.weekday())
@@ -142,13 +141,11 @@ async def get_day_schedule_text(target_datetime: datetime, include_holidays: boo
         if start_w <= current_week <= end_w:
             active_lessons.append(f"⏱ <b>{item['time']}</b>\n▫️ {item['text']}")
     
-    holidays_block = await get_holidays(target_date) if include_holidays else ""
-    
-    header = f"📅 <b>{day_name} ({date_str})</b>\n📌 {week_info}\n\n{holidays_block}📚 <b>Занятия:</b>\n"
+    header = f"📅 <b>{day_name} ({date_str})</b>\n📌 {week_info}\n"
     if not active_lessons:
-        return f"📅 <b>{day_name} ({date_str})</b>\n📌 {week_info}\n\n{holidays_block}🎉 В этот день пар нет!"
+        return f"{header}\n🎉 В этот день пар нет!"
     
-    return f"{header}" + "\n\n".join(active_lessons)
+    return f"{header}\n" + "\n\n".join(active_lessons)
 
 def get_week_schedule_text(current_datetime: datetime) -> str:
     schedule = load_schedule()
@@ -200,19 +197,25 @@ async def cmd_start(message: Message):
 @dp.message(F.text == "Сегодня")
 async def send_today(message: Message):
     now_msk = datetime.now(MOSCOW_TZ)
-    text = await get_day_schedule_text(now_msk, include_holidays=True)
+    text = get_day_schedule_text(now_msk)
     await message.answer(text, reply_markup=get_main_keyboard(message.chat.id), parse_mode="HTML")
 
 @dp.message(F.text == "Завтра")
 async def send_tomorrow(message: Message):
     tomorrow_msk = datetime.now(MOSCOW_TZ) + timedelta(days=1)
-    text = await get_day_schedule_text(tomorrow_msk, include_holidays=False)
+    text = get_day_schedule_text(tomorrow_msk)
     await message.answer(text, reply_markup=get_main_keyboard(message.chat.id), parse_mode="HTML")
 
 @dp.message(F.text == "Вся неделя")
 async def send_week(message: Message):
     now_msk = datetime.now(MOSCOW_TZ)
     text = get_week_schedule_text(now_msk)
+    await message.answer(text, reply_markup=get_main_keyboard(message.chat.id), parse_mode="HTML")
+
+@dp.message(F.text == "🎉 Праздники")
+async def send_holidays(message: Message):
+    now_msk = datetime.now(MOSCOW_TZ)
+    text = await get_holidays_message(now_msk.date())
     await message.answer(text, reply_markup=get_main_keyboard(message.chat.id), parse_mode="HTML")
 
 @dp.message(F.text.in_(["🔔 Включить рассылку", "🔕 Отключить рассылку"]))
@@ -236,7 +239,7 @@ async def daily_scheduler():
         await asyncio.sleep(sleep_seconds)
         
         send_time = datetime.now(MOSCOW_TZ)
-        text = "🌅 <b>Доброе утро! Расписание на сегодня:</b>\n\n" + await get_day_schedule_text(send_time, include_holidays=True)
+        text = "🌅 <b>Доброе утро! Расписание на сегодня:</b>\n\n" + get_day_schedule_text(send_time)
         subscribers = load_subscribers()
         
         for chat_id in subscribers:
