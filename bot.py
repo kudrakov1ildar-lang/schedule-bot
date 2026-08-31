@@ -69,7 +69,7 @@ def get_study_week_number(target_date: date) -> int:
     return (delta_days // 7) + 1
 
 async def get_holidays(target_date: date) -> str:
-    """Получает праздники через открытый API Википедии"""
+    """Получает список праздников и памятных дат дня через API Википедии"""
     months_genitive = [
         "января", "февраля", "марта", "апреля", "мая", "июня",
         "июля", "августа", "сентября", "октября", "ноября", "декабря"
@@ -77,34 +77,44 @@ async def get_holidays(target_date: date) -> str:
     month_name = months_genitive[target_date.month - 1]
     page_title = f"{target_date.day}_{month_name}"
     
-    url = f"https://ru.wikipedia.org/w/api.php?action=parse&page={page_title}&prop=wikitext&format=json"
-    headers = {"User-Agent": "TelegramScheduleBot/1.0 (student project)"}
+    url = "https://ru.wikipedia.org/w/api.php"
+    params = {
+        "action": "parse",
+        "page": page_title,
+        "prop": "wikitext",
+        "section": "1",  # Первая секция на страницах дат — всегда праздники и памятные дни
+        "format": "json"
+    }
+    headers = {"User-Agent": "TelegramScheduleBot/1.1 (edu project; python-aiohttp)"}
     
     try:
         async with ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=5) as resp:
+            async with session.get(url, params=params, timeout=5) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     wikitext = data.get("parse", {}).get("wikitext", {}).get("*", "")
                     
-                    match = re.search(r'==\s*Праздники.*?\n(.*?)(?=\n==|\Z)', wikitext, re.DOTALL | re.IGNORECASE)
-                    if match:
-                        section_text = match.group(1)
-                        lines = section_text.split("\n")
-                        holidays = []
-                        for line in lines:
-                            line = line.strip()
-                            if line.startswith(("*", "**", "#")):
-                                cleaned = re.sub(r'\{\{.*?\}\}', '', line)
-                                cleaned = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', cleaned)
-                                cleaned = re.sub(r'[*#—–-]', '', cleaned).strip()
-                                cleaned = re.sub(r'<.*?>', '', cleaned).strip()
-                                if cleaned and len(cleaned) > 4 and not cleaned.startswith(("Международные", "Национальные", "Религиозные", "Памятные")):
-                                    holidays.append(cleaned)
-                        
-                        if holidays:
-                            top = holidays[:3]
-                            return "🎈 <b>Праздники сегодня:</b>\n" + "\n".join([f"▫️ {h}" for h in top]) + "\n\n"
+                    holidays = []
+                    for raw_line in wikitext.split("\n"):
+                        line = raw_line.strip()
+                        if line.startswith(("*", "**", "#")):
+                            # Убираем комментарии <!-- ... -->
+                            line = re.sub(r'<!--.*?-->', '', line)
+                            # Убираем шаблоны {{...}}
+                            line = re.sub(r'\{\{.*?\}\}', '', line)
+                            # Превращаем [[Ссылка|Текст]] -> Текст, [[Текст]] -> Текст
+                            line = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', line)
+                            # Убираем кавычки вики, маркеры списков и html-теги
+                            line = re.sub(r"['*#—–-]", '', line)
+                            line = re.sub(r'<.*?>', '', line).strip()
+                            
+                            if len(line) > 5 and not line.lower().startswith(("международные", "национальные", "религиозные", "памятные", "прочие")):
+                                holidays.append(line)
+                                if len(holidays) >= 3:
+                                    break
+                    
+                    if holidays:
+                        return "🎈 <b>Праздники сегодня:</b>\n" + "\n".join([f"▫️ {h}" for h in holidays]) + "\n\n"
     except Exception:
         pass
     return ""
