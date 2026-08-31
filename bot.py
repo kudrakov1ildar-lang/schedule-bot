@@ -1,4 +1,4 @@
-import asyncio
+    import asyncio
 import json
 import os
 from datetime import date, datetime, timedelta
@@ -77,13 +77,54 @@ def get_day_schedule_text(target_datetime: datetime) -> str:
     
     header = f"📅 <b>{day_name} ({date_str})</b>\n📌 {week_info}\n"
     if not active_lessons:
-        return f"{header}\n🎉 В этот день пар нет (или они не выпадают на эту неделю)!"
+        return f"{header}\n🎉 В этот день пар нет!"
     
     return f"{header}\n" + "\n\n".join(active_lessons)
 
+def get_week_schedule_text(current_datetime: datetime) -> str:
+    schedule = load_schedule()
+    today_date = current_datetime.date()
+    current_week = get_study_week_number(today_date)
+    
+    # Понедельник текущей недели
+    monday = today_date - timedelta(days=today_date.weekday())
+    
+    if current_week < 1:
+        week_header = "🗓 <b>РАСПИСАНИЕ НА НЕДЕЛЮ</b>\n<i>(Семестр ещё не начался, старт 01.09)</i>\n"
+    elif current_week > 17:
+        week_header = f"🗓 <b>РАСПИСАНИЕ НА НЕДЕЛЮ</b>\n<i>(Семестр завершён, {current_week}-я неделя)</i>\n"
+    else:
+        week_header = f"🗓 <b>РАСПИСАНИЕ НА НЕДЕЛЮ ({current_week}-я учебная неделя)</b>\n"
+    
+    days_blocks = []
+    
+    # С понедельника (0) по субботу (5)
+    for day_offset in range(6):
+        day_date = monday + timedelta(days=day_offset)
+        day_key = str(day_offset)
+        day_name = WEEKDAYS[day_offset]
+        date_str = day_date.strftime("%d.%m")
+        
+        lessons = schedule.get(day_key, [])
+        active_lessons = []
+        for item in lessons:
+            start_w, end_w = item["weeks"]
+            if start_w <= current_week <= end_w:
+                active_lessons.append(f"• <b>{item['time']}</b> | {item['text']}")
+        
+        if active_lessons:
+            lessons_str = "\n".join(active_lessons)
+            days_blocks.append(f"<b>{day_name} ({date_str})</b>:\n{lessons_str}")
+        else:
+            days_blocks.append(f"<b>{day_name} ({date_str})</b>:\n<i>— Пар нет</i>")
+    
+    return week_header + "\n\n" + "\n\n".join(days_blocks)
+
+# Клавиатура с быстрыми кнопками
 keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")]
+        [KeyboardButton(text="Сегодня"), KeyboardButton(text="Завтра")],
+        [KeyboardButton(text="Вся неделя")]
     ],
     resize_keyboard=True
 )
@@ -94,7 +135,7 @@ async def cmd_start(message: Message):
     await message.answer(
         "👋 Бот расписания для группы <b>14.6-520</b>.\n"
         "Вы автоматически подписаны на ежедневную рассылку в 06:00 (МСК).\n\n"
-        "Также вы можете запросить расписание вручную:",
+        "Выберите нужный пункт:",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -111,11 +152,16 @@ async def send_tomorrow(message: Message):
     text = get_day_schedule_text(tomorrow_msk)
     await message.answer(text, parse_mode="HTML")
 
-# Ежедневная рассылка в 06:00 по Москве
+@dp.message(F.text == "Вся неделя")
+async def send_week(message: Message):
+    now_msk = datetime.now(MOSCOW_TZ)
+    text = get_week_schedule_text(now_msk)
+    await message.answer(text, parse_mode="HTML")
+
+# Рассылка в 06:00 по МСК
 async def daily_scheduler():
     while True:
         now = datetime.now(MOSCOW_TZ)
-        # Целевое время — ближайшие 06:00 МСК
         target = now.replace(hour=6, minute=0, second=0, microsecond=0)
         if now >= target:
             target += timedelta(days=1)
@@ -123,7 +169,6 @@ async def daily_scheduler():
         sleep_seconds = (target - now).total_seconds()
         await asyncio.sleep(sleep_seconds)
         
-        # Момент отправки (06:00 МСК)
         send_time = datetime.now(MOSCOW_TZ)
         text = "🌅 <b>Доброе утро! Расписание на сегодня:</b>\n\n" + get_day_schedule_text(send_time)
         subscribers = load_subscribers()
@@ -135,7 +180,7 @@ async def daily_scheduler():
             except Exception:
                 pass
 
-# Заглушка для открытого порта Render
+# Эндпоинты для Render
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
 
@@ -151,7 +196,6 @@ async def start_web_server():
 
 async def main():
     await start_web_server()
-    # Запуск фонового планировщика рассылки
     asyncio.create_task(daily_scheduler())
     await dp.start_polling(bot)
 
