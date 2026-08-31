@@ -38,7 +38,6 @@ def load_subscribers() -> set:
     return set()
 
 def toggle_subscriber(user_id: int) -> bool:
-    """Включает или выключает рассылку. Возвращает True, если включена."""
     users = load_subscribers()
     if user_id in users:
         users.remove(user_id)
@@ -70,24 +69,42 @@ def get_study_week_number(target_date: date) -> int:
     return (delta_days // 7) + 1
 
 async def get_holidays(target_date: date) -> str:
-    months_en = [
-        "yanvar", "fevral", "mart", "aprel", "may", "iyun",
-        "iyul", "avgust", "sentyabr", "oktyabr", "noyabr", "dekabr"
+    """Получает праздники через открытый API Википедии"""
+    months_genitive = [
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря"
     ]
-    month_str = months_en[target_date.month - 1]
-    url = f"https://kakoysegodnyaprazdnik.ru/baza/{month_str}/{target_date.day}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    month_name = months_genitive[target_date.month - 1]
+    page_title = f"{target_date.day}_{month_name}"
+    
+    url = f"https://ru.wikipedia.org/w/api.php?action=parse&page={page_title}&prop=wikitext&format=json"
+    headers = {"User-Agent": "TelegramScheduleBot/1.0 (student project)"}
     
     try:
         async with ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=4) as resp:
+            async with session.get(url, timeout=5) as resp:
                 if resp.status == 200:
-                    text_html = await resp.text()
-                    matches = re.findall(r'<span[^>]*itemprop=["\']text["\'][^>]*>(.*?)</span>', text_html)
-                    clean_holidays = [html.unescape(re.sub(r'<[^>]+>', '', m).strip()) for m in matches if m.strip()]
-                    if clean_holidays:
-                        top = clean_holidays[:3]
-                        return "🎈 <b>Праздники сегодня:</b>\n" + "\n".join([f"▫️ {h}" for h in top]) + "\n\n"
+                    data = await resp.json()
+                    wikitext = data.get("parse", {}).get("wikitext", {}).get("*", "")
+                    
+                    match = re.search(r'==\s*Праздники.*?\n(.*?)(?=\n==|\Z)', wikitext, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        section_text = match.group(1)
+                        lines = section_text.split("\n")
+                        holidays = []
+                        for line in lines:
+                            line = line.strip()
+                            if line.startswith(("*", "**", "#")):
+                                cleaned = re.sub(r'\{\{.*?\}\}', '', line)
+                                cleaned = re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', cleaned)
+                                cleaned = re.sub(r'[*#—–-]', '', cleaned).strip()
+                                cleaned = re.sub(r'<.*?>', '', cleaned).strip()
+                                if cleaned and len(cleaned) > 4 and not cleaned.startswith(("Международные", "Национальные", "Религиозные", "Памятные")):
+                                    holidays.append(cleaned)
+                        
+                        if holidays:
+                            top = holidays[:3]
+                            return "🎈 <b>Праздники сегодня:</b>\n" + "\n".join([f"▫️ {h}" for h in top]) + "\n\n"
     except Exception:
         pass
     return ""
@@ -239,4 +256,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-  
+    
